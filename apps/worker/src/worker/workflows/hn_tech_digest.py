@@ -5,6 +5,7 @@ user's credentials; meant for manual one-off executions, never for schedules.
 """
 
 import json
+import re
 from datetime import timedelta
 
 import mistralai.workflows as workflows
@@ -122,7 +123,27 @@ async def _chat_json(messages: list[dict], model: str = CHAT_MODEL) -> dict:
         response_format={"type": "json_object"},
     )
     content = response.choices[0].message.content
-    return json.loads(content)
+    if isinstance(content, str):
+        try:
+            return json.loads(content)
+        except json.JSONDecodeError:
+            match = re.search(r"\{.*\}|\[.*\]", content, re.DOTALL)
+            if match:
+                return json.loads(match.group(0))
+            raise
+    if isinstance(content, dict):
+        return content
+    if (
+        isinstance(content, list)
+        and content
+        and all(isinstance(chunk, dict) for chunk in content)
+    ):
+        if all(chunk.get("type") == "text" for chunk in content):
+            return json.loads("".join(chunk.get("text", "") for chunk in content))
+        return content
+    raise workflows.WorkflowError(
+        f"Unexpected chat content type: {type(content).__name__}"
+    )
 
 
 @workflows.activity(start_to_close_timeout=timedelta(seconds=120))
