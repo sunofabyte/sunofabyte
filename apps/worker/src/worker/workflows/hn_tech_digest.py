@@ -18,7 +18,7 @@ from mistralai.workflows.plugins.mistralai.connectors import (
 
 gmail_connector = connector("gmail")
 
-HN_API_BASE = "https://hacker-news.firebaseio.com/v0"
+HN_API_BASE = "https://hn.algolia.com/api/v1/search?tags=front_page"
 CHAT_MODEL = "mistral-large-latest"
 TTS_MODEL = "voxtral-mini-tts-3-0"
 MAX_ATTACHMENT_B64_CHARS = 4_000_000
@@ -84,44 +84,29 @@ def _language_name(code: str) -> str:
 
 @workflows.activity(start_to_close_timeout=timedelta(seconds=90))
 async def fetch_frontpage_stories(candidate_count: int) -> list[Story]:
-    import asyncio
-
     import httpx
 
     async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await client.get(f"{HN_API_BASE}/frontpage.json")
+        response = await client.get(
+            HN_API_BASE, params={"hitsPerPage": candidate_count}
+        )
         response.raise_for_status()
-        ids: list[int] = response.json()[:candidate_count]
-
-        semaphore = asyncio.Semaphore(10)
-
-        async def fetch_item(item_id: int) -> dict:
-            async with semaphore:
-                item_response = await client.get(f"{HN_API_BASE}/item/{item_id}.json")
-                item_response.raise_for_status()
-                return item_response.json()
-
-        items = await asyncio.gather(*(fetch_item(item_id) for item_id in ids))
+        hits = response.json().get("hits", [])
 
     stories: list[Story] = []
-    for item in items:
-        url = item.get("url")
-        if (
-            item.get("type") != "story"
-            or not url
-            or item.get("deleted")
-            or item.get("dead")
-        ):
+    for hit in hits:
+        url = hit.get("url")
+        if not url:
             continue
         stories.append(
             Story(
-                id=item["id"],
-                title=item.get("title", ""),
+                id=int(hit["objectID"]),
+                title=hit.get("title", ""),
                 url=url,
                 domain=url.split("//", 1)[-1].split("/", 1)[0],
-                by=item.get("by", ""),
-                score=item.get("score", 0),
-                comments=item.get("descendants", 0),
+                by=hit.get("author", ""),
+                score=hit.get("points", 0),
+                comments=hit.get("num_comments", 0),
             )
         )
     return stories
