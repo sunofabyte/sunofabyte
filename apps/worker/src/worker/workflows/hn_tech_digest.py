@@ -113,7 +113,17 @@ async def fetch_frontpage_stories(candidate_count: int) -> list[Story]:
     return stories
 
 
-async def _chat_json(messages: list[dict], model: str = CHAT_MODEL) -> dict:
+def _loads_lenient(text: str) -> object:
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        match = re.search(r"\{.*\}|\[.*\]", text, re.DOTALL)
+        if match:
+            return json.loads(match.group(0))
+        raise
+
+
+async def _chat_json(messages: list[dict], model: str = CHAT_MODEL) -> object:
     from mistralai.workflows.plugins.mistralai import get_mistral_client
 
     client = get_mistral_client()
@@ -124,22 +134,19 @@ async def _chat_json(messages: list[dict], model: str = CHAT_MODEL) -> dict:
     )
     content = response.choices[0].message.content
     if isinstance(content, str):
-        try:
-            return json.loads(content)
-        except json.JSONDecodeError:
-            match = re.search(r"\{.*\}|\[.*\]", content, re.DOTALL)
-            if match:
-                return json.loads(match.group(0))
-            raise
+        return _loads_lenient(content)
     if isinstance(content, dict):
         return content
-    if (
-        isinstance(content, list)
-        and content
-        and all(isinstance(chunk, dict) for chunk in content)
-    ):
-        if all(chunk.get("type") == "text" for chunk in content):
-            return json.loads("".join(chunk.get("text", "") for chunk in content))
+    if isinstance(content, list):
+        texts = [
+            chunk.get("text", "")
+            if isinstance(chunk, dict)
+            else (getattr(chunk, "text", "") or "")
+            for chunk in content
+        ]
+        joined = "".join(texts)
+        if joined.strip():
+            return _loads_lenient(joined)
         return content
     raise workflows.WorkflowError(
         f"Unexpected chat content type: {type(content).__name__}"

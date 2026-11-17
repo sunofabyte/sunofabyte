@@ -10,6 +10,12 @@ from worker.workflows import hn_tech_digest as mod
 WORKFLOW_EXECUTION_TIMEOUT = timedelta(seconds=10)
 
 
+def test_loads_lenient_handles_plain_json_and_fences() -> None:
+    assert mod._loads_lenient('{"a": 1}') == {"a": 1}
+    assert mod._loads_lenient('```json\n{"a": 1}\n```') == {"a": 1}
+    assert mod._loads_lenient("prefix [1, 2] suffix") == [1, 2]
+
+
 @workflows.activity()
 async def fetch_frontpage_stories(candidate_count: int) -> list[mod.Story]:
     return [
